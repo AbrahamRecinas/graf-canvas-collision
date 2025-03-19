@@ -1,171 +1,138 @@
 const canvas = document.getElementById("canvas");
-let ctx = canvas.getContext("2d");
+const ctx = canvas.getContext("2d");
 
-// Establecer dimensiones del canvas
-const window_height = window.innerHeight;
-const window_width = window.innerWidth;
+// Ajustar dimensiones al tamaño visible de la ventana
+const window_height = window.innerHeight - 20; 
+const window_width = window.innerWidth - 20;
 canvas.width = window_width;
 canvas.height = window_height;
 
+let removedCircles = 0;
+const maxCirclesOnScreen = 20; // Máximo de círculos simultáneos en pantalla
+
+const counterDisplay = document.createElement("div");
+counterDisplay.style.position = "absolute";
+counterDisplay.style.top = "10px";
+counterDisplay.style.right = "20px";
+counterDisplay.style.fontSize = "20px";
+counterDisplay.style.fontWeight = "bold";
+counterDisplay.style.color = "white";
+counterDisplay.innerText = `Círculos eliminados: ${removedCircles}`;
+document.body.appendChild(counterDisplay);
+
 class Circle {
-  constructor(x, y, radius, color, text, speed) {
+  constructor(x, radius, color, speed, striped) {
     this.posX = x;
-    this.posY = y;
+    this.posY = -radius;
     this.radius = radius;
-    this.originalColor = color; // Color base de la bola
-    this.text = text;
+    this.color = color;
     this.speed = speed;
-    // Velocidades iniciales aleatorias
-    this.dx = (Math.random() < 0.5 ? -1 : 1) * this.speed;
-    this.dy = (Math.random() < 0.5 ? -1 : 1) * this.speed;
-    // Para el efecto de flash en colisión
-    this.flashTimer = 0;
+    this.striped = striped; // true para rayadas, false para lisas
   }
-  
-  // Actualiza la posición y rebota en los bordes (las bandas de la mesa)
+
   move() {
-    this.posX += this.dx;
-    if (this.posX + this.radius > window_width || this.posX - this.radius < 0) {
-      this.dx = -this.dx;
-    }
-    this.posY += this.dy;
-    if (this.posY + this.radius > window_height || this.posY - this.radius < 0) {
-      this.dy = -this.dy;
+    this.posY += this.speed;
+    if (this.posY - this.radius > window_height) {
+      this.posY = -this.radius;
+      this.posX = Math.random() * (window_width - this.radius * 2) + this.radius;
     }
   }
-  
-  // Dibuja la bola con sombra, relleno y contorno. Si flashTimer > 0 se pinta en azul.
+
   draw(context) {
     context.save();
-    // Sombra para dar efecto 3D
-    context.shadowColor = "rgba(0, 0, 0, 0.3)";
-    context.shadowBlur = 5;
-    context.shadowOffsetX = 3;
-    context.shadowOffsetY = 3;
-    
-    // Color de la bola (flash en azul al colisionar)
-    let ballColor = this.flashTimer > 0 ? "#0000FF" : this.originalColor;
-    
+    context.shadowColor = "rgba(0,0,0,0.4)";
+    context.shadowBlur = 8;
+    context.shadowOffsetX = 2;
+    context.shadowOffsetY = 2;
+
+    const gradient = context.createRadialGradient(this.posX - this.radius / 3, this.posY - this.radius / 3, this.radius / 5, this.posX, this.posY, this.radius);
+    gradient.addColorStop(0, "#ffffffcc");
+    gradient.addColorStop(0.3, this.color);
+    gradient.addColorStop(1, this.color);
+
     context.beginPath();
-    context.fillStyle = ballColor;
+    context.fillStyle = gradient;
     context.arc(this.posX, this.posY, this.radius, 0, Math.PI * 2, false);
     context.fill();
-    
-    // Contorno blanco para simular la separación del fieltro
+
     context.lineWidth = 2;
-    context.strokeStyle = "white";
+    context.strokeStyle = "#ffffff";
     context.stroke();
-    
-    // Dibujar el número (o etiqueta) en el centro de la bola
-    context.shadowColor = "transparent";
-    context.fillStyle = "black";
-    context.font = "20px Arial";
-    context.textAlign = "center";
-    context.textBaseline = "middle";
-    context.fillText(this.text, this.posX, this.posY);
-    context.closePath();
+
+    if (this.striped) {
+      context.beginPath();
+      context.strokeStyle = "white";
+      context.lineWidth = (this.radius / 3) * 2;
+      context.moveTo(this.posX - this.radius + 2, this.posY);
+      context.lineTo(this.posX + this.radius - 2, this.posY);
+      context.stroke();
+      context.closePath();
+
+      context.beginPath();
+      context.arc(this.posX, this.posY, this.radius, 0, Math.PI * 2, false);
+      context.lineWidth = 2;
+      context.strokeStyle = "#ffffff";
+      context.stroke();
+      context.closePath();
+    }
+
     context.restore();
-    
-    if (this.flashTimer > 0) {
-      this.flashTimer--;
-    }
   }
-  
-  // Detecta colisión con otra bola (fórmula de distancia entre centros)
-  checkCollision(other) {
-    let dx = this.posX - other.posX;
-    let dy = this.posY - other.posY;
-    let distance = Math.hypot(dx, dy);
-    return distance < (this.radius + other.radius);
-  }
-  
-  // Resuelve la colisión:
-  // - Se separan las bolas para evitar solapamientos.
-  // - Se calcula la normal a partir de la diferencia de posiciones.
-  // - Se refleja la velocidad de cada bola en sentido opuesto a la dirección de impacto,
-  //   usando la proyección de la velocidad relativa sin factor extra.
-  // - Se activa un flash en azul.
-  resolveCollision(other) {
-    const xDiff = this.posX - other.posX;
-    const yDiff = this.posY - other.posY;
-    let distance = Math.hypot(xDiff, yDiff);
-    if (distance === 0) {
-      distance = 0.1;
-    }
-    // Normal de la colisión
-    const n = { x: xDiff / distance, y: yDiff / distance };
-    
-    // Separar las bolas para que no se solapen
-    const overlap = (this.radius + other.radius) - distance;
-    if (overlap > 0) {
-      const correctionFactor = overlap / 2;
-      this.posX += n.x * correctionFactor;
-      this.posY += n.y * correctionFactor;
-      other.posX -= n.x * correctionFactor;
-      other.posY -= n.y * correctionFactor;
-    }
-    
-    // Calcular la velocidad relativa
-    const vRel = { x: this.dx - other.dx, y: this.dy - other.dy };
-    // Proyección de la velocidad relativa sobre la normal
-    const dotProduct = vRel.x * n.x + vRel.y * n.y;
-    
-    // Actualizar las velocidades sin el factor 2 para evitar aumentar excesivamente la energía
-    this.dx = this.dx - dotProduct * n.x;
-    this.dy = this.dy - dotProduct * n.y;
-    other.dx = other.dx + dotProduct * n.x;
-    other.dy = other.dy + dotProduct * n.y;
-    
-    // Activar el efecto flash (bola se pinta en azul por algunos frames)
-    this.flashTimer = 5;
-    other.flashTimer = 5;
+
+  isClicked(x, y) {
+    const dx = x - this.posX;
+    const dy = y - this.posY;
+    return Math.sqrt(dx * dx + dy * dy) < this.radius;
   }
 }
 
 let circles = [];
 
-// Genera 10 bolas con velocidad entre 1 y 5 unidades y colores típicos de billar
-function generateCircles(n) {
-  // Paleta de colores (puedes personalizarla)
-  let colors = ["#FFD700", "#FF4500", "#1E90FF", "#32CD32", "#8A2BE2", "#DC143C", "#FF8C00", "#00CED1", "#FF1493", "#00FA9A"];
-  for (let i = 0; i < n; i++) {
-    let radius = Math.random() * 20 + 20; // Radio entre 20 y 40
-    let x = Math.random() * (window_width - radius * 2) + radius;
-    let y = Math.random() * (window_height - radius * 2) + radius;
-    let color = colors[i % colors.length];
-    let speed = Math.random() * 4 + 1; // Velocidad entre 1 y 5
-    let text = (i + 1).toString();
-    circles.push(new Circle(x, y, radius, color, text, speed));
-  }
+function generateCircle() {
+  const radius = Math.random() * 20 + 20;
+  const x = Math.random() * (window_width - radius * 2) + radius;
+  const colors = ["#FFD700", "#FF4500", "#1E90FF", "#32CD32", "#8A2BE2", "#DC143C", "#FF8C00", "#00CED1", "#FF1493", "#00FA9A"];
+  const color = colors[Math.floor(Math.random() * colors.length)];
+  const speed = Math.random() * 2 + 1;
+  const striped = Math.random() < 0.5;
+  circles.push(new Circle(x, radius, color, speed, striped));
 }
 
-function animate() {
-  // Dibujar fondo de mesa de billar (fieltro verde)
-  ctx.fillStyle = "#35654d"; // Color verde para el fieltro
+function drawBackground() {
+  ctx.fillStyle = "#35654d";
   ctx.fillRect(0, 0, window_width, window_height);
-  
-  // Dibujar bandas o cojines (bordes de la mesa) en marrón
   ctx.lineWidth = 30;
   ctx.strokeStyle = "#654321";
   ctx.strokeRect(15, 15, window_width - 30, window_height - 30);
-  
-  // Actualizar la posición de cada bola
-  circles.forEach(circle => circle.move());
-  
-  // Detectar y resolver colisiones entre bolas
-  for (let i = 0; i < circles.length; i++) {
-    for (let j = i + 1; j < circles.length; j++) {
-      if (circles[i].checkCollision(circles[j])) {
-        circles[i].resolveCollision(circles[j]);
-      }
-    }
+}
+
+function animate() {
+  drawBackground();
+
+  while (circles.length < maxCirclesOnScreen) {
+    generateCircle();
   }
-  
-  // Dibujar las bolas (con efecto flash si han colisionado)
-  circles.forEach(circle => circle.draw(ctx));
-  
+
+  circles.forEach(circle => {
+    circle.move();
+    circle.draw(ctx);
+  });
+
   requestAnimationFrame(animate);
 }
 
-generateCircles(10);
+canvas.addEventListener("click", (event) => {
+  const rect = canvas.getBoundingClientRect();
+  const mouseX = event.clientX - rect.left;
+  const mouseY = event.clientY - rect.top;
+
+  // Usar findIndex para eliminar solo un círculo a la vez y evitar bloqueos
+  const clickedIndex = circles.findIndex(circle => circle.isClicked(mouseX, mouseY));
+  if (clickedIndex !== -1) {
+    circles.splice(clickedIndex, 1);
+    removedCircles++;
+    counterDisplay.innerText = `Círculos eliminados: ${removedCircles}`;
+  }
+});
+
 animate();
